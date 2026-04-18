@@ -1,0 +1,45 @@
+# HealthVault AI — Systemd Service for FastAPI backend
+# Copy to: /etc/systemd/system/healthvault-api.service
+#
+# Then run:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable healthvault-api
+#   sudo systemctl start healthvault-api
+
+[Unit]
+Description=HealthVault AI FastAPI Backend
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=www-data
+Group=www-data
+
+WorkingDirectory=/var/www/healthvault-ai/backend
+
+# Load environment variables from .env file
+EnvironmentFile=/var/www/healthvault-ai/backend/.env
+
+# Activate venv and start gunicorn
+ExecStart=/var/www/healthvault-ai/venv/bin/gunicorn \
+    --config /var/www/healthvault-ai/backend/gunicorn.conf.py \
+    main:app
+
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s TERM $MAINPID
+
+# Auto-restart on crash
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=append:/var/log/healthvault/app.log
+StandardError=append:/var/log/healthvault/error.log
+
+[Install]
+WantedBy=multi-user.target

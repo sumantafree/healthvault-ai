@@ -1,0 +1,99 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;0,14..32,800;1,14..32,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    --sidebar-width: 260px;
+    --header-height: 64px;
+    --brand-blue: #3B82F6;
+    --brand-indigo: #6366F1;
+  }
+
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-surface-subtle text-text-primary antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* ── Scrollbar ─────────────────────────────────────────────── */
+  ::-webkit-scrollbar          { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track    { background: transparent; }
+  ::-webkit-scrollbar-thumb    { @apply bg-slate-200 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-slate-300; }
+}
+
+@layer components {
+  /* ── Skeleton shimmer ─────────────────────────────────────── */
+  .skeleton {
+    @apply bg-surface-muted rounded-lg;
+    background: linear-gradient(90deg, #f1f5f9 25%, #e8edf2 50%, #f1f5f9 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.6s infinite;
+  }
+
+  /* ── Glass card ───────────────────────────────────────────── */
+  .glass {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+  }
+
+  /* ── Gradient text ────────────────────────────────────────── */
+  .gradient-text {
+    background: linear-gradient(135deg, #3B82F6 0%, #6366F1 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* ── Nav pill active ──────────────────────────────────────── */
+  .nav-active {
+    background: linear-gradient(135deg, #3B82F6 0%, #6366F1 100%);
+    @apply text-white shadow-sm;
+  }
+
+  /* ── Stat card hover ──────────────────────────────────────── */
+  .stat-card {
+    @apply bg-white rounded-card border border-surface-border shadow-card transition-all duration-200;
+  }
+  .stat-card:hover {
+    @apply shadow-card-hover -translate-y-0.5;
+  }
+
+  /* ── Table row ────────────────────────────────────────────── */
+  .table-row-hover {
+    @apply transition-colors hover:bg-surface-subtle;
+  }
+
+  /* ── Focus ring ───────────────────────────────────────────── */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue focus-visible:ring-offset-2;
+  }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+
+  .bg-grid {
+    background-image: radial-gradient(circle, #e2e8f0 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar { display: none; }
+}
