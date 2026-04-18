@@ -17,8 +17,31 @@ from config import settings
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 
+def _normalize_async_url(url: str) -> str:
+    """
+    Ensure the DATABASE_URL uses the asyncpg driver.
+    Supabase/Heroku/Render typically hand out `postgresql://` or `postgres://`,
+    but SQLAlchemy's async engine needs `postgresql+asyncpg://`.
+    Also strips query params that asyncpg does not support (e.g. `sslmode`,
+    `pgbouncer`) — TLS is negotiated automatically by asyncpg against Supabase.
+    """
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    if url.startswith("postgresql://") and "+asyncpg" not in url:
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    # Drop unsupported query params (asyncpg rejects sslmode / pgbouncer)
+    if "?" in url:
+        base, _, query = url.partition("?")
+        kept = [
+            p for p in query.split("&")
+            if p and not p.lower().startswith(("sslmode=", "pgbouncer=", "channel_binding="))
+        ]
+        url = base + (f"?{'&'.join(kept)}" if kept else "")
+    return url
+
+
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    _normalize_async_url(settings.DATABASE_URL),
     pool_size=settings.DATABASE_POOL_SIZE,
     max_overflow=settings.DATABASE_MAX_OVERFLOW,
     pool_pre_ping=True,          # recycles stale connections
