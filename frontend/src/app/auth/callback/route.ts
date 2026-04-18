@@ -15,10 +15,12 @@ export async function GET(request: Request) {
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`);
     }
-    // Log the real reason in server logs, but don't leak to user
+    // Surface the real error so we can debug — safe because it's just the
+    // OAuth flow reason, not a secret.
     console.error("auth callback exchange failed:", error.message);
+    const msg = encodeURIComponent(error.message || "unknown");
+    return NextResponse.redirect(`${origin}/login?error=${msg}`);
   }
 
-  // Anything went wrong → send them back to login with an error flag
-  return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`);
+  return NextResponse.redirect(`${origin}/login?error=no_code_in_callback`);
 }
