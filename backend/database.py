@@ -2,6 +2,7 @@
 HealthVault AI — Database Engine & Session Management
 Uses SQLAlchemy async engine with PostgreSQL (Supabase).
 """
+import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -46,6 +47,15 @@ engine = create_async_engine(
     max_overflow=settings.DATABASE_MAX_OVERFLOW,
     pool_pre_ping=True,          # recycles stale connections
     echo=not settings.is_production,
+    # Supabase pooler (PgBouncer in transaction mode) does not support
+    # prepared statements that persist across transactions. Disable asyncpg's
+    # statement cache and randomize statement names so pooled connections
+    # don't collide on names like "__asyncpg_stmt_8__".
+    connect_args={
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+        "prepared_statement_name_func": lambda: f"__asyncpg_{uuid.uuid4()}__",
+    },
 )
 
 AsyncSessionLocal = async_sessionmaker(
