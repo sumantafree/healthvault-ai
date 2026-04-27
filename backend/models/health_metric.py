@@ -5,7 +5,7 @@ Individual structured data points extracted from reports.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Numeric, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,8 +16,8 @@ class HealthMetric(Base):
     __tablename__ = "health_metrics"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    family_member_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    report_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    family_member_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("family_members.id", ondelete="CASCADE"), nullable=False, index=True)
+    report_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("health_reports.id", ondelete="SET NULL"), index=True)
     test_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     value: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False)
     unit: Mapped[str | None] = mapped_column(String(50))
