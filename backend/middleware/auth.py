@@ -1,6 +1,11 @@
 """
 HealthVault AI — Auth Middleware
 Validates Supabase JWT tokens and injects the current user into requests.
+
+Tokens are validated by calling Supabase's `/auth/v1/user` endpoint, which
+works with any signing algorithm (HS256 legacy projects + ES256/RS256
+asymmetric-key projects). This avoids having to ship a JWT secret to the
+backend or implement JWKS rotation locally.
 """
 import uuid
 from typing import Annotated, Optional
@@ -8,7 +13,6 @@ from typing import Annotated, Optional
 import httpx
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import ExpiredSignatureError, JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,33 +23,55 @@ from models.user import User
 security = HTTPBearer()
 
 
-# ── JWT Verification ─────────────────────────────────────────────────────────
+# ── JWT Verification (via Supabase auth API) ─────────────────────────────────
 
-def _decode_supabase_jwt(token: str) -> dict:
+async def _verify_supabase_jwt(token: str) -> dict:
     """
-    Verify and decode a Supabase-issued JWT.
-    Supabase uses HS256 with the project JWT secret.
+    Verify a Supabase-issued JWT by calling Supabase's GoTrue /user endpoint.
+    Returns the user payload (with `id`, `email`, `user_metadata`, etc.) on
+    success, raises 401 on any failure. Works with HS256, ES256, or RS256.
     """
+    if not settings.SUPABASE_URL:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="SUPABASE_URL is not configured on the server.",
+        )
+
+    url = f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/user"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        # GoTrue requires the apikey header; the anon/service-role key works.
+        "apikey": settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY or "",
+    }
+
     try:
-        payload = jwt.decode(
-            token,
-            settings.SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            options={"verify_aud": False},  # Supabase doesn't always set aud
+        async with httpx.AsyncClient(timeout=8.0) as http:
+            r = await http.get(url, headers=headers)
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Could not reach Supabase auth: {e}",
         )
-        return payload
-    except ExpiredSignatureError:
+
+    if r.status_code != 200:
+        # Surface the real reason (expired token, invalid sig, etc.)
+        try:
+            msg = r.json().get("msg") or r.json().get("error_description") or r.text
+        except Exception:
+            msg = r.text
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired. Please log in again.",
+            detail=f"Invalid authentication token: {msg}",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except JWTError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid authentication token: {str(e)}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+
+    user = r.json()
+    # Normalize to look like the JWT payload our downstream code expects.
+    return {
+        "sub": user["id"],
+        "email": user.get("email", ""),
+        "user_metadata": user.get("user_metadata", {}) or {},
+    }
 
 
 # ── User Resolution ───────────────────────────────────────────────────────────
@@ -94,7 +120,7 @@ async def get_current_user(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
     """Primary auth dependency — validates JWT and returns the DB user."""
-    payload = _decode_supabase_jwt(credentials.credentials)
+    payload = await _verify_supabase_jwt(credentials.credentials)
     return await get_or_create_user(payload, db)
 
 
@@ -107,7 +133,7 @@ async def get_current_user_optional(
     """Optional auth — returns None instead of raising if no token provided."""
     if credentials is None:
         return None
-    payload = _decode_supabase_jwt(credentials.credentials)
+    payload = await _verify_supabase_jwt(credentials.credentials)
     return await get_or_create_user(payload, db)
 
 
