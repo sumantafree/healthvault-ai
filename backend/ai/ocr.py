@@ -9,10 +9,10 @@ Strategy:
   4. Fallback: LLM cleanup of noisy OCR via prompts.build_ocr_cleanup_prompt
 """
 import asyncio
+import base64
 import io
 from typing import Optional
 
-import pytesseract
 import structlog
 from PIL import Image
 
@@ -20,12 +20,22 @@ from config import settings
 
 log = structlog.get_logger(__name__)
 
-# Configure Tesseract binary path
-pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_CMD
-
-# Tesseract config: OEM 3 (LSTM + Legacy), PSM 3 (auto page seg)
-_TESS_CONFIG = "--oem 3 --psm 3"
 _MIN_TEXT_LENGTH = 100  # chars below which we consider PDF text extraction failed
+
+# Optional Tesseract — only used if explicitly available locally. Render's free
+# tier doesn't have tesseract installed, so we fall back to Gemini Vision OCR
+# for images and rendered PDF pages.
+try:
+    import pytesseract  # type: ignore
+    pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_CMD
+    # Probe — `get_tesseract_version()` raises if the binary isn't on PATH.
+    pytesseract.get_tesseract_version()
+    _HAS_TESSERACT = True
+except Exception:
+    _HAS_TESSERACT = False
+    log.info("ocr.tesseract_unavailable_using_gemini_vision")
+
+_TESS_CONFIG = "--oem 3 --psm 3"
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -38,7 +48,9 @@ async def extract_text(contents: bytes, mime_type: str) -> str:
     if mime_type == "application/pdf":
         return await _extract_from_pdf(contents)
     elif mime_type.startswith("image/"):
-        return await asyncio.to_thread(_extract_from_image_bytes, contents)
+        if _HAS_TESSERACT:
+            return await asyncio.to_thread(_extract_from_image_bytes, contents)
+        return await _extract_from_image_via_gemini(contents, mime_type)
     else:
         raise ValueError(f"Unsupported MIME type for OCR: {mime_type}")
 
@@ -58,15 +70,52 @@ async def _extract_from_pdf(contents: bytes) -> str:
         log.info("ocr.pdf_direct_extract", chars=len(direct_text))
         return direct_text
 
-    # Pass 2: render pages to images and OCR
+    # Pass 2: render pages to images and OCR (Tesseract or Gemini Vision)
     log.info("ocr.pdf_fallback_to_image_ocr", direct_chars=len(direct_text))
-    image_text = await asyncio.to_thread(_pymupdf_render_and_ocr, contents)
+    if _HAS_TESSERACT:
+        image_text = await asyncio.to_thread(_pymupdf_render_and_ocr, contents)
+    else:
+        image_text = await _pymupdf_render_and_gemini_ocr(contents)
 
     combined = (direct_text + "\n" + image_text).strip()
     if not combined:
         raise ValueError("Could not extract any text from the PDF.")
 
     return combined
+
+
+async def _pymupdf_render_and_gemini_ocr(contents: bytes, max_pages: int = 5) -> str:
+    """Render PDF pages with PyMuPDF, OCR each via Gemini Vision."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        log.error("ocr.pymupdf_not_installed")
+        return ""
+
+    def _render_pages() -> list[bytes]:
+        doc = fitz.open(stream=contents, filetype="pdf")
+        page_count = min(len(doc), max_pages)
+        pages = []
+        for page_num in range(page_count):
+            page = doc[page_num]
+            mat = fitz.Matrix(150 / 72, 150 / 72)  # 150 DPI is enough for Gemini
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            pages.append(pix.tobytes("png"))
+        return pages
+
+    page_images = await asyncio.to_thread(_render_pages)
+    log.info("ocr.pdf_rendered_for_gemini", pages=len(page_images))
+
+    texts = []
+    for i, img_bytes in enumerate(page_images):
+        try:
+            page_text = await _extract_from_image_via_gemini(img_bytes, "image/png")
+            texts.append(page_text)
+            log.info("ocr.gemini_page_done", page=i + 1, chars=len(page_text))
+        except Exception as exc:
+            log.error("ocr.gemini_page_failed", page=i + 1, error=str(exc))
+
+    return "\n".join(texts)
 
 
 def _pypdf2_extract(contents: bytes) -> str:
@@ -141,16 +190,59 @@ def _pdf2image_fallback(contents: bytes, max_pages: int = 10) -> str:
 # ── Image Extraction ──────────────────────────────────────────────────────────
 
 def _extract_from_image_bytes(contents: bytes) -> str:
-    """Run Tesseract on a raw image (JPEG, PNG, TIFF, WEBP)."""
+    """Run Tesseract on a raw image. Only used if Tesseract is available."""
     try:
         img = Image.open(io.BytesIO(contents))
         img = _preprocess_image(img)
         text = pytesseract.image_to_string(img, config=_TESS_CONFIG)
-        log.info("ocr.image_extract", chars=len(text))
+        log.info("ocr.image_extract_tesseract", chars=len(text))
         return text
     except Exception as exc:
-        log.error("ocr.image_error", error=str(exc))
-        raise ValueError(f"OCR failed on image: {str(exc)}")
+        log.error("ocr.tesseract_image_error", error=str(exc))
+        raise ValueError(f"Tesseract OCR failed on image: {str(exc)}")
+
+
+async def _extract_from_image_via_gemini(contents: bytes, mime_type: str) -> str:
+    """
+    Use Gemini Vision to extract text from an image.
+    Works for JPEG/PNG/WEBP/HEIC and any image format Gemini supports.
+    """
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        raise ValueError("google-generativeai not installed; cannot OCR without Tesseract.")
+
+    if not settings.GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY not configured; cannot OCR without Tesseract.")
+
+    genai.configure(api_key=settings.GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-1.5-flash")
+
+    # Normalize mime type — Gemini wants e.g. "image/jpeg"
+    mime = mime_type or "image/jpeg"
+    if not mime.startswith("image/"):
+        mime = "image/jpeg"
+
+    prompt = (
+        "Extract ALL the text visible in this medical/health document image. "
+        "Preserve numbers, units, ranges, and table structure where possible. "
+        "Output the raw text exactly as it appears — no summary, no commentary."
+    )
+
+    def _call() -> str:
+        response = model.generate_content(
+            [{"mime_type": mime, "data": contents}, prompt],
+            generation_config={"temperature": 0.0, "max_output_tokens": 4096},
+        )
+        return (response.text or "").strip()
+
+    try:
+        text = await asyncio.to_thread(_call)
+        log.info("ocr.image_extract_gemini", chars=len(text))
+        return text
+    except Exception as exc:
+        log.error("ocr.gemini_image_error", error=str(exc))
+        raise ValueError(f"Gemini Vision OCR failed: {exc}")
 
 
 def _preprocess_image(img: Image.Image) -> Image.Image:
