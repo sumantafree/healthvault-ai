@@ -216,7 +216,9 @@ async def _extract_from_image_via_gemini(contents: bytes, mime_type: str) -> str
         raise ValueError("GEMINI_API_KEY not configured; cannot OCR without Tesseract.")
 
     genai.configure(api_key=settings.GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    # Use -latest suffix for compatibility with older google-generativeai SDK
+    # versions that talk to the v1beta API.
+    model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
     # Normalize mime type — Gemini wants e.g. "image/jpeg"
     mime = mime_type or "image/jpeg"

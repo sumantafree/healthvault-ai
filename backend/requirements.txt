@@ -39,7 +39,7 @@ boto3==1.34.84             # AWS S3 (fallback storage)
 
 # AI / LLM
 openai==1.25.0
-google-generativeai==0.5.3
+google-generativeai==0.8.3
 langchain==0.1.20
 langchain-openai==0.1.6
 tiktoken==0.6.0
