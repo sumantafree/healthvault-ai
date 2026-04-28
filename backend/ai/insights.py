@@ -12,6 +12,7 @@ import structlog
 from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from ai.gemini_models import get_gemini_model_name
 from ai.prompts import (
     PROMPT_VERSION,
     SYSTEM_INSIGHTS,
@@ -21,6 +22,7 @@ from config import settings
 from models.ai_insight import DISCLAIMER
 
 log = structlog.get_logger(__name__)
+_GEMINI_MODEL = get_gemini_model_name()
 
 
 # ── Output Model ──────────────────────────────────────────────────────────────
@@ -95,7 +97,7 @@ async def generate_insights(
 
     if settings.AI_PROVIDER == "gemini":
         raw_json = await _insights_with_gemini(metrics, member_context)
-        model_name = "gemini-1.5-pro"
+        model_name = _GEMINI_MODEL
     else:
         raw_json = await _insights_with_openai(metrics, member_context)
         model_name = settings.OPENAI_MODEL
@@ -144,7 +146,7 @@ async def _insights_with_gemini(metrics: list[dict], member_context: dict) -> st
 
     genai.configure(api_key=settings.GEMINI_API_KEY)
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-pro",
+        model_name=_GEMINI_MODEL,
         system_instruction=SYSTEM_INSIGHTS,
         generation_config=genai.GenerationConfig(
             temperature=0.3,

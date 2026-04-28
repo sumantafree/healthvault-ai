@@ -228,39 +228,24 @@ async def _extract_from_image_via_gemini(contents: bytes, mime_type: str) -> str
         "Output the raw text exactly as it appears — no summary, no commentary."
     )
 
-    # Try several model names in order. Google has been deprecating older
-    # names ("no longer available to new users"); we keep newest-first.
-    # Verified available via /debug/gemini-models on this API key.
-    candidate_models = [
-        "gemini-2.5-flash",
-        "gemini-flash-latest",
-        "gemini-2.0-flash-001",
-        "gemini-2.0-flash-lite-001",
-        "gemini-2.5-pro",
-        "gemini-pro-latest",
-    ]
+    from ai.gemini_models import get_gemini_model_name
+    model_name = get_gemini_model_name()
 
-    def _call(name: str) -> str:
-        m = genai.GenerativeModel(name)
+    def _call() -> str:
+        m = genai.GenerativeModel(model_name)
         response = m.generate_content(
             [{"mime_type": mime, "data": contents}, prompt],
             generation_config={"temperature": 0.0, "max_output_tokens": 4096},
         )
         return (response.text or "").strip()
 
-    last_err: Optional[Exception] = None
-    for name in candidate_models:
-        try:
-            text = await asyncio.to_thread(_call, name)
-            log.info("ocr.image_extract_gemini", model=name, chars=len(text))
-            return text
-        except Exception as exc:
-            log.warning("ocr.gemini_model_failed", model=name, error=str(exc)[:200])
-            last_err = exc
-            continue
-
-    log.error("ocr.gemini_all_models_failed", error=str(last_err))
-    raise ValueError(f"Gemini Vision OCR failed (no model worked): {last_err}")
+    try:
+        text = await asyncio.to_thread(_call)
+        log.info("ocr.image_extract_gemini", model=model_name, chars=len(text))
+        return text
+    except Exception as exc:
+        log.error("ocr.gemini_image_error", model=model_name, error=str(exc))
+        raise ValueError(f"Gemini Vision OCR failed: {exc}")
 
 
 def _preprocess_image(img: Image.Image) -> Image.Image:

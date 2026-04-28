@@ -14,6 +14,7 @@ import structlog
 from pydantic import BaseModel, Field, field_validator
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from ai.gemini_models import get_gemini_model_name
 from ai.prompts import (
     PROMPT_VERSION,
     SYSTEM_REPORT_PARSER,
@@ -23,6 +24,7 @@ from ai.prompts import (
 from config import settings
 
 log = structlog.get_logger(__name__)
+_GEMINI_MODEL = get_gemini_model_name()
 
 
 # ── Output Models ─────────────────────────────────────────────────────────────
@@ -163,7 +165,7 @@ async def _parse_with_gemini(raw_text: str, report_type: str) -> str:
 
     genai.configure(api_key=settings.GEMINI_API_KEY)
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-pro",
+        model_name=_GEMINI_MODEL,
         system_instruction=SYSTEM_REPORT_PARSER,
         generation_config=genai.GenerationConfig(
             temperature=0,
@@ -183,7 +185,7 @@ async def _gemini_completion(system: str, user: str) -> str:
 
     genai.configure(api_key=settings.GEMINI_API_KEY)
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-pro",
+        model_name=_GEMINI_MODEL,
         system_instruction=system,
     )
     response = await asyncio.to_thread(model.generate_content, user)
