@@ -84,8 +84,18 @@ def build_insights_prompt(
     disclaimer: str,
 ) -> str:
     import json
-    metrics_json = json.dumps(metrics, indent=2)
-    context_json = json.dumps(member_context, indent=2)
+    from datetime import date, datetime
+    from decimal import Decimal
+
+    def _default(o):
+        if isinstance(o, Decimal):
+            return float(o)
+        if isinstance(o, (date, datetime)):
+            return o.isoformat()
+        return str(o)
+
+    metrics_json = json.dumps(metrics, indent=2, default=_default)
+    context_json = json.dumps(member_context, indent=2, default=_default)
 
     return f"""Analyze the following health metrics for a patient and provide an informational health summary.
 
