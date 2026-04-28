@@ -228,15 +228,16 @@ async def _extract_from_image_via_gemini(contents: bytes, mime_type: str) -> str
         "Output the raw text exactly as it appears — no summary, no commentary."
     )
 
-    # Try several model names in order — different API keys / SDK versions
-    # support different sets. Stop at the first one that succeeds.
+    # Try several model names in order. Google has been deprecating older
+    # names ("no longer available to new users"); we keep newest-first.
+    # Verified available via /debug/gemini-models on this API key.
     candidate_models = [
-        "gemini-2.0-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro-latest",
-        "gemini-pro-vision",
-        "gemini-pro",
+        "gemini-2.5-flash",
+        "gemini-flash-latest",
+        "gemini-2.0-flash-001",
+        "gemini-2.0-flash-lite-001",
+        "gemini-2.5-pro",
+        "gemini-pro-latest",
     ]
 
     def _call(name: str) -> str:
