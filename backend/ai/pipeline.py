@@ -14,12 +14,13 @@ Stages:
   7. save_insights    — insert AIInsight row
   8. finalize         — update report status to 'done'
 """
-import logging
+import sys
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +33,15 @@ from models.family_member import FamilyMember
 from models.health_metric import HealthMetric
 from models.health_report import HealthReport
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
+
+
+def _flush(msg: str, **kwargs) -> None:
+    """Print to stdout AND structlog so logs appear no matter how logging is
+    configured. Render captures stdout reliably; structlog may be buffered."""
+    parts = " ".join(f"{k}={v}" for k, v in kwargs.items())
+    print(f"[pipeline] {msg} {parts}", flush=True, file=sys.stdout)
+    log.info(msg, **kwargs)
 
 
 # ── Pipeline Entry Point ───────────────────────────────────────────────────────
@@ -43,46 +52,58 @@ async def process_report_pipeline(report_id: uuid.UUID) -> None:
     Called as a background task after upload.
     All errors are caught — report is marked 'failed' on any unrecoverable error.
     """
-    log.info("pipeline.start", report_id=str(report_id))
+    _flush("pipeline.start", report_id=str(report_id))
 
     async with get_db_context() as db:
         report = await _fetch_report(report_id, db)
         if not report:
-            log.error("pipeline.report_not_found", report_id=str(report_id))
+            _flush("pipeline.report_not_found", report_id=str(report_id))
             return
 
         try:
             await _set_status(report, "processing", db)
+            _flush("pipeline.status_processing", report_id=str(report_id))
 
             # Stage 1: Download file
+            _flush("pipeline.stage1_download_start", url=report.file_url[:100])
             contents, mime_type = await _download_file(report)
+            _flush("pipeline.stage1_download_done", bytes=len(contents), mime=mime_type)
 
             # Stage 2 + 3: OCR + optional cleanup
+            _flush("pipeline.stage2_ocr_start")
             raw_text = await _run_ocr(report, contents, mime_type, db)
+            _flush("pipeline.stage2_ocr_done", chars=len(raw_text))
 
             # Stage 4: LLM parse → structured metrics
+            _flush("pipeline.stage4_parse_start")
             parsed = await _run_parser(report, raw_text, db)
+            _flush("pipeline.stage4_parse_done", metrics=len(parsed.metrics))
 
             # Stage 5: Save metrics to DB
+            _flush("pipeline.stage5_save_metrics_start")
             metric_dicts = await _save_metrics(report, parsed, db)
+            _flush("pipeline.stage5_save_metrics_done")
 
             # Stage 6 + 7: Generate + save AI insights
+            _flush("pipeline.stage6_insights_start")
             member = await _fetch_member(report.family_member_id, db)
             await _run_insights(report, metric_dicts, member, db)
+            _flush("pipeline.stage6_insights_done")
 
             # Stage 8: Finalize
             await _finalize(report, parsed, db)
-
-            log.info(
-                "pipeline.complete",
-                report_id=str(report_id),
-                metrics=len(parsed.metrics),
-                risk=report.risk_level,
-            )
+            _flush("pipeline.complete", report_id=str(report_id),
+                   metrics=len(parsed.metrics), risk=report.risk_level)
 
         except Exception as exc:
-            log.error("pipeline.failed", report_id=str(report_id), error=str(exc), exc_info=True)
-            await _set_status(report, "failed", db, error=str(exc))
+            import traceback
+            tb = traceback.format_exc()
+            _flush("pipeline.failed", report_id=str(report_id), error=str(exc))
+            print(tb, flush=True, file=sys.stdout)
+            try:
+                await _set_status(report, "failed", db, error=f"{type(exc).__name__}: {exc}")
+            except Exception as inner:
+                _flush("pipeline.failed_to_record_error", inner=str(inner))
 
 
 # ── Pipeline Stages ────────────────────────────────────────────────────────────
