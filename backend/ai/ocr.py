@@ -216,9 +216,6 @@ async def _extract_from_image_via_gemini(contents: bytes, mime_type: str) -> str
         raise ValueError("GEMINI_API_KEY not configured; cannot OCR without Tesseract.")
 
     genai.configure(api_key=settings.GEMINI_API_KEY)
-    # Use -latest suffix for compatibility with older google-generativeai SDK
-    # versions that talk to the v1beta API.
-    model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
     # Normalize mime type — Gemini wants e.g. "image/jpeg"
     mime = mime_type or "image/jpeg"
@@ -231,20 +228,38 @@ async def _extract_from_image_via_gemini(contents: bytes, mime_type: str) -> str
         "Output the raw text exactly as it appears — no summary, no commentary."
     )
 
-    def _call() -> str:
-        response = model.generate_content(
+    # Try several model names in order — different API keys / SDK versions
+    # support different sets. Stop at the first one that succeeds.
+    candidate_models = [
+        "gemini-2.0-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro-latest",
+        "gemini-pro-vision",
+        "gemini-pro",
+    ]
+
+    def _call(name: str) -> str:
+        m = genai.GenerativeModel(name)
+        response = m.generate_content(
             [{"mime_type": mime, "data": contents}, prompt],
             generation_config={"temperature": 0.0, "max_output_tokens": 4096},
         )
         return (response.text or "").strip()
 
-    try:
-        text = await asyncio.to_thread(_call)
-        log.info("ocr.image_extract_gemini", chars=len(text))
-        return text
-    except Exception as exc:
-        log.error("ocr.gemini_image_error", error=str(exc))
-        raise ValueError(f"Gemini Vision OCR failed: {exc}")
+    last_err: Optional[Exception] = None
+    for name in candidate_models:
+        try:
+            text = await asyncio.to_thread(_call, name)
+            log.info("ocr.image_extract_gemini", model=name, chars=len(text))
+            return text
+        except Exception as exc:
+            log.warning("ocr.gemini_model_failed", model=name, error=str(exc)[:200])
+            last_err = exc
+            continue
+
+    log.error("ocr.gemini_all_models_failed", error=str(last_err))
+    raise ValueError(f"Gemini Vision OCR failed (no model worked): {last_err}")
 
 
 def _preprocess_image(img: Image.Image) -> Image.Image:

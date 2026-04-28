@@ -128,3 +128,18 @@ async def health_check():
 @app.get("/", tags=["System"], include_in_schema=False)
 async def root():
     return {"message": f"Welcome to {settings.APP_NAME} API", "docs": "/docs"}
+
+
+@app.get("/debug/gemini-models", tags=["System"], include_in_schema=False)
+async def debug_gemini_models():
+    """List Gemini models accessible with the configured API key."""
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=settings.GEMINI_API_KEY)
+        models = []
+        for m in genai.list_models():
+            if "generateContent" in (m.supported_generation_methods or []):
+                models.append({"name": m.name, "display_name": m.display_name})
+        return {"count": len(models), "models": models}
+    except Exception as e:
+        return {"error": str(e)}
