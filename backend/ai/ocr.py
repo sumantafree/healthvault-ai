@@ -10,15 +10,15 @@ Strategy:
 """
 import asyncio
 import io
-import logging
 from typing import Optional
 
 import pytesseract
+import structlog
 from PIL import Image
 
 from config import settings
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 # Configure Tesseract binary path
 pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_CMD

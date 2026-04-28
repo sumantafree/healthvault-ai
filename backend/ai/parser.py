@@ -7,10 +7,10 @@ Output contract:
   Each metric maps 1:1 to a HealthMetric DB row.
 """
 import json
-import logging
 from datetime import date
 from typing import Optional
 
+import structlog
 from pydantic import BaseModel, Field, field_validator
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -22,7 +22,7 @@ from ai.prompts import (
 )
 from config import settings
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 
 # ── Output Models ─────────────────────────────────────────────────────────────

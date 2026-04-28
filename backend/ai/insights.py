@@ -6,9 +6,9 @@ IMPORTANT: This module never produces medical diagnoses.
 All output includes a mandatory disclaimer.
 """
 import json
-import logging
 from typing import Optional
 
+import structlog
 from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -20,7 +20,7 @@ from ai.prompts import (
 from config import settings
 from models.ai_insight import DISCLAIMER
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 
 # ── Output Model ──────────────────────────────────────────────────────────────
